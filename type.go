@@ -2396,10 +2396,10 @@ func variantTypedValueNode(node Node, fieldPath ...string) (typed Node, err erro
 		if err != nil {
 			return nil, err
 		}
-		group[child.Name()] = Group{
+		group[child.Name()] = Required(Group{
 			"value":       Optional(Leaf(ByteArrayType)),
 			"typed_value": Optional(childNode),
-		}
+		})
 	}
 	if node.ID() != 0 {
 		return FieldID(group, node.ID()), nil
@@ -2411,7 +2411,7 @@ func getLogicalType(lt *format.LogicalType) any {
 	// We use reflection so we can always catch a logical type annotation. If a
 	// new one is added, we don't have to remember to update the switch above (unless
 	// a new one is added that is also supported as a variant value).
-	refVal := reflect.ValueOf(lt)
+	refVal := reflect.Indirect(reflect.ValueOf(lt))
 	for i := range refVal.NumField() {
 		field := refVal.Field(i)
 		if field.CanInterface() && !field.IsZero() {
