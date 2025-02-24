@@ -234,15 +234,24 @@ func (e *encoder) VisitUUID(val UUID) error {
 }
 
 func (e *encoder) BeginArray() error {
-	return e.push(initArray)
+	return e.push(func(entry *encodeStackEntry) {
+		entry.isArray = true
+	})
 }
 
 func (e *encoder) EndArray() error {
-	return e.pop(mustBeArray)
+	return e.pop(func(entry *encodeStackEntry) error {
+		if !entry.isArray {
+			return errors.New("invalid state: EndArray called but not visiting an array")
+		}
+		return nil
+	})
 }
 
 func (e *encoder) BeginObject() error {
-	return e.push(initObject)
+	return e.push(func(entry *encodeStackEntry) {
+		entry.isObject = true
+	})
 }
 
 func (e *encoder) ObjectField(name string) error {
@@ -263,7 +272,12 @@ func (e *encoder) ObjectField(name string) error {
 }
 
 func (e *encoder) EndObject() error {
-	return e.pop(mustBeObject)
+	return e.pop(func(entry *encodeStackEntry) error {
+		if !entry.isObject {
+			return errors.New("invalid state: EndObject called but not visiting an object")
+		}
+		return nil
+	})
 }
 
 func (e *encoder) checkState() error {
@@ -407,28 +421,6 @@ func (e *encodeStackEntry) result() (Shredded, error) {
 	default:
 		return Shredded{}, errors.New("invalid state: no value visited")
 	}
-}
-
-func mustBeArray(entry *encodeStackEntry) error {
-	if !entry.isArray {
-		return errors.New("invalid state: EndArray called but not visiting an array")
-	}
-	return nil
-}
-
-func initArray(entry *encodeStackEntry) {
-	entry.isArray = true
-}
-
-func mustBeObject(entry *encodeStackEntry) error {
-	if !entry.isObject {
-		return errors.New("invalid state: EndObject called but not visiting an object")
-	}
-	return nil
-}
-
-func initObject(entry *encodeStackEntry) {
-	entry.isObject = true
 }
 
 type neverShred struct{}
@@ -749,9 +741,9 @@ func encodeObject(baseData []byte, fields []FieldData, metadataKey map[string]in
 		offsets[i] = uint32(offset)
 		data = encodeData(data, field.Shredded, neverShred{}, metadataKey, indexRemap).Unshredded
 	}
-	totalSize := len(data) - start
-	fieldOffsetSize, appendFieldOffset := determineSize(totalSize, "object values")
-	offsets[len(offsets)] = uint32(totalSize)
+	dataSize := len(data) - start
+	fieldOffsetSize, appendFieldOffset := determineSize(dataSize, "object values")
+	offsets[len(offsets)] = uint32(dataSize)
 	fieldIDSize, appendFieldID := determineSize(maxFieldID, "object field IDs")
 
 	var appendNumFields func([]byte, int) []byte
@@ -774,13 +766,18 @@ func encodeObject(baseData []byte, fields []FieldData, metadataKey map[string]in
 	}
 	if len(prefix) != prefixEstSize {
 		// we need to shift contents to make up for the discrepancy
-		copy(data[baseLen:], data[start:])
-		data = data[:baseLen+len(prefix)+totalSize]
+		actualStart := baseLen + len(prefix)
+		copy(data[actualStart:], data[start:])
+		data = data[:actualStart+dataSize]
 	}
 	return data
 }
 
 func encodeArray(baseData []byte, elems []Data, metadataKey map[string]int, indexRemap []int) []byte {
+	// TODO: This function is SO similar to encodeObject... It would be nice if
+	// there were a clean and simple way to consolidate the logic but omit the
+	// name/field ID handling bits.
+
 	isLarge := len(elems) > 255
 	// The prefix will be this size *at most*. So we go ahead and allocate this
 	// much and can then shift the contents back if the actual prefix turns out
@@ -804,9 +801,9 @@ func encodeArray(baseData []byte, elems []Data, metadataKey map[string]int, inde
 		offsets[i] = uint32(offset)
 		data = encodeData(data, elem.Shredded, neverShred{}, metadataKey, indexRemap).Unshredded
 	}
-	totalSize := len(data) - start
-	fieldOffsetSize, appendFieldOffset := determineSize(totalSize, "array values")
-	offsets[len(offsets)] = uint32(totalSize)
+	dataSize := len(data) - start
+	fieldOffsetSize, appendFieldOffset := determineSize(dataSize, "array values")
+	offsets[len(offsets)] = uint32(dataSize)
 
 	var appendNumElems func([]byte, int) []byte
 	var isLargeBit byte
@@ -825,8 +822,9 @@ func encodeArray(baseData []byte, elems []Data, metadataKey map[string]int, inde
 	}
 	if len(prefix) != prefixEstSize {
 		// we need to shift contents to make up for the discrepancy
-		copy(data[baseLen:], data[start:])
-		data = data[:baseLen+len(prefix)+totalSize]
+		actualStart := baseLen + len(prefix)
+		copy(data[actualStart:], data[start:])
+		data = data[:actualStart+dataSize]
 	}
 	return data
 }
