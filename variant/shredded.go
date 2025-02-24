@@ -3,6 +3,7 @@ package variant
 import (
 	"encoding/binary"
 	"fmt"
+	"github.com/google/uuid"
 	"math"
 	"unsafe"
 )
@@ -93,7 +94,7 @@ func ShreddedValueOf(val any) (Shredded, bool) {
 		return ShreddedValueOfString(val), true
 	case Time:
 		return ShreddedValueOfTime(val)
-	case UUID:
+	case uuid.UUID:
 		return ShreddedValueOfUUID(val), true
 	case []FieldData:
 		return ShreddedValueOfObject(val), true
@@ -192,7 +193,7 @@ func ShreddedValueOfTimestamp(val Timestamp) (Shredded, bool) {
 	}
 }
 
-func ShreddedValueOfUUID(val UUID) Shredded {
+func ShreddedValueOfUUID(val uuid.UUID) Shredded {
 	return Shredded{
 		kind: KindUUID,
 		v1:   binary.BigEndian.Uint64(val[:8]),
@@ -266,7 +267,7 @@ func (s Shredded) Interface() any {
 	case KindTimestampNanosNTZ:
 		return Timestamp{TimeUnit: Nanosecond, AdjustedToUTC: false, Value: int64(s.v1)}
 	case KindUUID:
-		var val UUID
+		var val uuid.UUID
 		binary.BigEndian.AppendUint64(val[:], s.v1)
 		binary.BigEndian.AppendUint64(val[8:], s.v2)
 		return val
@@ -408,11 +409,11 @@ func (s Shredded) StringValue() (string, bool) {
 	return unsafe.String(s.p, s.v1), true
 }
 
-func (s Shredded) UUIDValue() (UUID, bool) {
+func (s Shredded) UUIDValue() (uuid.UUID, bool) {
 	if s.kind != KindUUID {
-		return UUID{}, false
+		return uuid.UUID{}, false
 	}
-	var val UUID
+	var val uuid.UUID
 	binary.BigEndian.AppendUint64(val[:], s.v1)
 	binary.BigEndian.AppendUint64(val[8:], s.v2)
 	return val, true
@@ -539,8 +540,6 @@ type Timestamp struct {
 type Time Timestamp
 
 type Date int32
-
-type UUID [16]byte
 
 type Decimal4 struct {
 	Value int32

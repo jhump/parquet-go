@@ -1,5 +1,7 @@
 package variant
 
+import "github.com/google/uuid"
+
 // Visitor accepts values decoded from a variant.
 //
 // The interface has typed methods for visiting simple "leaf" values.
@@ -41,7 +43,7 @@ type Visitor interface {
 	VisitTimestamp(Timestamp) error
 	VisitBytes([]byte) error
 	VisitString(string) error
-	VisitUUID(UUID) error
+	VisitUUID(uuid.UUID) error
 
 	// BeginArray indicates that the variant is an array value. Other
 	// Visit* methods will be called, zero or more times, for each
@@ -62,12 +64,4 @@ type Visitor interface {
 	// EndObject is the closing bookend of a call to BeginObject. It
 	// indicates that all fields have been visited.
 	EndObject() error
-}
-
-// Visit interprets src as a variant value and invokes the relevant
-// methods of visitor. Using an *encoder as the visitor can be
-// used to encode an arbitrary Go type as a variant.
-func Visit(src any, visitor Visitor) error {
-	// TODO
-	return nil
 }

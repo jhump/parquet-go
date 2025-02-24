@@ -1,14 +1,15 @@
 package variant
 
-// NewDecoder returns a visitor that can, for example, be used with
-// VariantValue.Decode to decode a variant value into the given destination
-// value.
-func NewDecoder(dest any) Visitor {
-	//return &valueBuilder{current: dest}
-	return nil
+func Decode(src Value, visitor Visitor, opts ...DecodeOption) error {
+
 }
 
-type valueBuilder struct {
-	groupStack []map[string]any
-	current    any
+type DecodeOption interface {
+	apply(*decoder)
+}
+
+func WithNoIndexForSortedMetadata() DecodeOption {
+}
+
+type decoder struct {
 }

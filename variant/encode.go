@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"math"
 	"sort"
 	"unsafe"
@@ -14,33 +15,6 @@ var (
 	errInvalidTime      = errors.New("invalid time")
 	errInvalidTimestamp = errors.New("invalid timestamp")
 )
-
-// ShredOracle is a value that advises whether an encoder should keep
-// the variant value in typed/shredded form or encode to "unshredded"
-// bytes.
-type ShredOracle interface {
-	// ShredPrimitive returns true if a value of the given kind should
-	// be kept in shredded form.
-	ShredPrimitive(Kind) bool
-	// ShredArray returns a non-nil value if an array value should be
-	// kept in shredded form. The returned value advises whether
-	// elements in the array should be shredded, based on their type.
-	ShredArray() ShredOracle
-	// ShredObject returns a non-nil value if an object value should
-	// be kept in shredded form. The returned value is used to
-	// determine which fields in the object should be shredded.
-	ShredObject() ShredFieldOracle
-}
-
-// ShredFieldOracle is a value that advises an encoder as to which
-// fields should be kept in typed/shredded form.
-type ShredFieldOracle interface {
-	// ShredField returns a non-nil value if the given named field
-	// should be kept in shredded form. The returned value advises
-	// whether the field's value should be shredded, based on its
-	// type.
-	ShredField(field string) ShredOracle
-}
 
 // Encoder is a visitor that encodes the visited value. After the
 // variant is visited, the Encode method can be used to extract the
@@ -58,7 +32,7 @@ type Encoder interface {
 // NewEncoder returns a new Encoder that behaves according to the
 // given options. If no options are given, it does not sort the
 // metadata dictionary and produces an entirely unshredded Value.
-func NewEncoder(opts ...EncoderOption) Encoder {
+func NewEncoder(opts ...EncodeOption) Encoder {
 	enc := &encoder{
 		metadataKey: make(map[string]int),
 	}
@@ -71,9 +45,9 @@ func NewEncoder(opts ...EncoderOption) Encoder {
 	return enc
 }
 
-// EncoderOption is an option that customizes how an Encoder
+// EncodeOption is an option that customizes how an Encoder
 // behaves.
-type EncoderOption interface {
+type EncodeOption interface {
 	apply(*encoder)
 }
 
@@ -85,7 +59,7 @@ func (f encoderOptionFunc) apply(e *encoder) {
 
 // WithSortedMetadata is an option that instructs an Encoder to
 // produce a Value with sorted metadata.
-func WithSortedMetadata() EncoderOption {
+func WithSortedMetadata() EncodeOption {
 	return encoderOptionFunc(func(e *encoder) {
 		e.sortMetadata = true
 	})
@@ -94,10 +68,37 @@ func WithSortedMetadata() EncoderOption {
 // WithShredOracle is an option that instructs an Encoder to
 // use the given oracle for deciding which fields to keep in
 // shredded form.
-func WithShredOracle(oracle ShredOracle) EncoderOption {
+func WithShredOracle(oracle ShredOracle) EncodeOption {
 	return encoderOptionFunc(func(e *encoder) {
 		e.oracle = oracle
 	})
+}
+
+// ShredOracle is a value that advises whether an encoder should keep
+// a variant value in typed/shredded form or encode to "unshredded"
+// bytes.
+type ShredOracle interface {
+	// ShredPrimitive returns true if a value of the given kind should
+	// be kept in shredded form.
+	ShredPrimitive(Kind) bool
+	// ShredArray returns a non-nil value if an array value should be
+	// kept in shredded form. The returned value advises whether
+	// elements in the array should be shredded, based on their type.
+	ShredArray() ShredOracle
+	// ShredObject returns a non-nil value if an object value should
+	// be kept in shredded form. The returned value is used to
+	// determine which fields in the object should be shredded.
+	ShredObject() ShredFieldOracle
+}
+
+// ShredFieldOracle is a value that advises an encoder as to which
+// fields in an object should be kept in typed/shredded form.
+type ShredFieldOracle interface {
+	// ShredField returns a non-nil value if the given named field
+	// should be kept in shredded form. The returned value advises
+	// whether the field's value should be shredded, based on its
+	// type.
+	ShredField(field string) ShredOracle
 }
 
 type encoder struct {
@@ -229,7 +230,7 @@ func (e *encoder) VisitString(val string) error {
 	return e.accept(ShreddedValueOfString(val))
 }
 
-func (e *encoder) VisitUUID(val UUID) error {
+func (e *encoder) VisitUUID(val uuid.UUID) error {
 	return e.accept(ShreddedValueOfUUID(val))
 }
 
