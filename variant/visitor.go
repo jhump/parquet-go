@@ -12,17 +12,17 @@ package variant
 //     the start of the array. Then zero or more additional calls,
 //     to visit the elements of the array, followed by a call to
 //     EndArray.
-//  2. Groups: The visitor's BeginGroup will be called to indicate
-//     the start of the group. Then there will be a call to GroupField
-//     for each field in the group. Another method call will be made
-//     after GroupField, before the next call to GroupField, to visit
+//  2. Objects: The visitor's BeginObject will be called to indicate
+//     the start of the object. Then there will be a call to ObjectField
+//     for each field in the object. Another method call will be made
+//     after ObjectField, before the next call to ObjectField, to visit
 //     the value of that field. Finally, after all fields have been
-//     visited, EndGroup is called.
+//     visited, EndObject is called.
 //
 // When composite values contain other composite values, the calls to
-// BeginArray and EndArray or BeginGroup and EndGroup nest. A visitor
+// BeginArray and EndArray or BeginObject and EndObject nest. A visitor
 // implementation will need to keep track of the nesting, as well as
-// keep track of field names between the call to GroupField and the
+// keep track of field names between the call to ObjectField and the
 // call(s) to visit the field's value.
 type Visitor interface {
 	VisitNull() error
@@ -51,21 +51,21 @@ type Visitor interface {
 	// indicates that all elements have been visited.
 	EndArray() error
 
-	// BeginGroup indicates that the variant is a group value. Calls
-	// will subsequently alternate between GroupField and then Other
-	// Visit* methods, for each field in the group, followed by a call
-	// to EndGroup.
-	BeginGroup() error
-	// GroupField indicates the name of the field whose value is next
+	// BeginObject indicates that the variant is an object value. Calls
+	// will subsequently alternate between ObjectField and then Other
+	// Visit* methods, for each field in the object, followed by a call
+	// to EndObject.
+	BeginObject() error
+	// ObjectField indicates the name of the field whose value is next
 	// to be visited.
-	GroupField(name string) error
-	// EndGroup is the closing bookend of a call to BeginGroup. It
+	ObjectField(name string) error
+	// EndObject is the closing bookend of a call to BeginObject. It
 	// indicates that all fields have been visited.
-	EndGroup() error
+	EndObject() error
 }
 
 // Visit interprets src as a variant value and invokes the relevant
-// methods of visitor. Using an *Encoder as the visitor can be
+// methods of visitor. Using an *encoder as the visitor can be
 // used to encode an arbitrary Go type as a variant.
 func Visit(src any, visitor Visitor) error {
 	// TODO
