@@ -767,7 +767,7 @@ func encodeObject(baseData []byte, fields []FieldData, metadataKey map[string]in
 	var isLargeBit byte
 	if isLarge {
 		appendNumFields = appendUint32
-		isLargeBit = 0b100_0000
+		isLargeBit = 0x40
 	} else {
 		appendNumFields = appendUint8
 	}

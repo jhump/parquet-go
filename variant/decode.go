@@ -380,7 +380,7 @@ func decodeUnshreddedObject(data []byte, fieldsSeen map[string]struct{}, visitor
 		return err
 	}
 	var numElementsSize int
-	if ((data[0] >> 6) & 1) == 0 {
+	if (data[0] & 0x40) == 0 {
 		numElementsSize = 1
 	} else {
 		numElementsSize = 4
@@ -440,7 +440,7 @@ func decodeUnshreddedArray(data []byte, visitor Visitor, dict metadataDict) erro
 		return err
 	}
 	var numElementsSize int
-	if ((data[0] >> 4) & 1) == 0 {
+	if (data[0] & 0x10) == 0 {
 		numElementsSize = 1
 	} else {
 		numElementsSize = 4
