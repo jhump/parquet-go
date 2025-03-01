@@ -151,8 +151,8 @@ func ShreddedValueOfDecimal8(val Decimal8) Shredded {
 func ShreddedValueOfDecimal16(val Decimal16) Shredded {
 	return Shredded{
 		kind: KindDecimal16,
-		v1:   binary.BigEndian.Uint64(val.Value[:8]),
-		v2:   binary.BigEndian.Uint64(val.Value[8:]),
+		v1:   uint64(val.ValueHi),
+		v2:   val.ValueLo,
 		s:    val.Scale,
 	}
 }
@@ -244,10 +244,7 @@ func (s Shredded) Interface() any {
 	case KindDecimal8:
 		return Decimal8{Value: int64(s.v1), Scale: s.s}
 	case KindDecimal16:
-		var val [16]byte
-		binary.BigEndian.AppendUint64(val[:], s.v1)
-		binary.BigEndian.AppendUint64(val[8:], s.v2)
-		return Decimal16{Value: val, Scale: s.s}
+		return Decimal16{ValueHi: int64(s.v1), ValueLo: s.v2, Scale: s.s}
 	case KindDate:
 		return Date(s.v1)
 	case KindTimestampMicros:
@@ -360,10 +357,7 @@ func (s Shredded) Decimal16Value() (Decimal16, bool) {
 	if s.kind != KindDecimal16 {
 		return Decimal16{}, false
 	}
-	var val [16]byte
-	binary.BigEndian.AppendUint64(val[:], s.v1)
-	binary.BigEndian.AppendUint64(val[8:], s.v2)
-	return Decimal16{Value: val, Scale: s.s}, true
+	return Decimal16{ValueHi: int64(s.v1), ValueLo: s.v2, Scale: s.s}, true
 }
 
 func (s Shredded) DateValue() (Date, bool) {
@@ -520,7 +514,7 @@ func (k Kind) String() string {
 	case KindObject:
 		return "object"
 	default:
-		return fmt.Sprintf("Kind(%d)", k)
+		return fmt.Sprintf("unknown kind(%d)", k)
 	}
 }
 
@@ -552,6 +546,7 @@ type Decimal8 struct {
 }
 
 type Decimal16 struct {
-	Value [16]byte
-	Scale uint8
+	ValueHi int64
+	ValueLo uint64
+	Scale   uint8
 }

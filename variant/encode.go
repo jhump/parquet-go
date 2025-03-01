@@ -4,10 +4,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"math"
 	"sort"
 	"unsafe"
+
+	"github.com/google/uuid"
 )
 
 var (
@@ -51,16 +52,16 @@ type EncodeOption interface {
 	apply(*encoder)
 }
 
-type encoderOptionFunc func(*encoder)
+type encodeOptionFunc func(*encoder)
 
-func (f encoderOptionFunc) apply(e *encoder) {
+func (f encodeOptionFunc) apply(e *encoder) {
 	f(e)
 }
 
 // WithSortedMetadata is an option that instructs an Encoder to
 // produce a Value with sorted metadata.
 func WithSortedMetadata() EncodeOption {
-	return encoderOptionFunc(func(e *encoder) {
+	return encodeOptionFunc(func(e *encoder) {
 		e.sortMetadata = true
 	})
 }
@@ -69,7 +70,7 @@ func WithSortedMetadata() EncodeOption {
 // use the given oracle for deciding which fields to keep in
 // shredded form.
 func WithShredOracle(oracle ShredOracle) EncodeOption {
-	return encoderOptionFunc(func(e *encoder) {
+	return encodeOptionFunc(func(e *encoder) {
 		e.oracle = oracle
 	})
 }
@@ -568,6 +569,21 @@ const (
 	basicTypeArray       basicType = 3
 )
 
+func (b basicType) String() string {
+	switch b {
+	case basicTypePrimitive:
+		return "primitive"
+	case basicTypeShortString:
+		return "short string"
+	case basicTypeObject:
+		return "object"
+	case basicTypeArray:
+		return "array"
+	default:
+		return fmt.Sprintf("unknown basic type(%d)", b)
+	}
+}
+
 func encodeData(baseData []byte, val Shredded, oracle ShredOracle, metadataKey map[string]int, indexRemap []int) Data {
 	switch val.kind {
 	case KindObject:
@@ -677,8 +693,8 @@ func encodePrimitive(baseData []byte, val Shredded) []byte {
 		result := growBy(baseData, 18)
 		result[baseLen] = headerByte
 		result[baseLen+1] = val.s
-		binary.BigEndian.PutUint64(result[baseLen+2:], val.v1)
-		binary.BigEndian.PutUint64(result[baseLen+10:], val.v2)
+		binary.LittleEndian.PutUint64(result[baseLen+2:], val.v2)
+		binary.LittleEndian.PutUint64(result[baseLen+10:], val.v1)
 		return result
 	case KindBinary, KindString:
 		baseLen := len(baseData)
