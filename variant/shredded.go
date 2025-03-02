@@ -3,9 +3,17 @@ package variant
 import (
 	"encoding/binary"
 	"fmt"
-	"github.com/google/uuid"
 	"math"
+	"math/big"
+	"time"
 	"unsafe"
+
+	"github.com/google/uuid"
+)
+
+const (
+	secondsPerDay  = int64(24 * time.Hour / time.Second)
+	nanosPerSecond = int64(time.Second / time.Nanosecond)
 )
 
 // Shredded represents a shredded value, which is a strongly
@@ -61,6 +69,9 @@ type Shredded struct {
 // microseconds. Timestamp values must have a unit of microseconds or
 // nanoseconds. Otherwise, false is returned.
 func ShreddedValueOf(val any) (Shredded, bool) {
+	// TODO: benchmark this switch. There are many cases, so it may be
+	// faster to pre-compute a map of type -> function. The key would
+	// have to be a reflect.Type.
 	switch val := val.(type) {
 	case nil:
 		return ShreddedValueOfNull(), true
@@ -222,6 +233,8 @@ func (s Shredded) Kind() Kind {
 }
 
 func (s Shredded) Interface() any {
+	// TODO: benchmark this switch. There are many cases, so it may be
+	// faster to pre-compute a map of kind -> function.
 	switch s.kind {
 	case KindNull:
 		return nil
@@ -465,57 +478,38 @@ const (
 	KindObject = Kind(255)
 )
 
+var kindStrings = map[Kind]string{
+	KindNull:               "null",
+	KindBooleanTrue:        "boolean-true",
+	KindBooleanFalse:       "boolean-false",
+	KindInt8:               "int8",
+	KindInt16:              "int16",
+	KindInt32:              "int32",
+	KindInt64:              "int64",
+	KindDouble:             "double",
+	KindDecimal4:           "decimal4",
+	KindDecimal8:           "decimal8",
+	KindDecimal16:          "decimal16",
+	KindDate:               "date",
+	KindTimestampMicros:    "timestamp-micros",
+	KindTimestampMicrosNTZ: "timestamp-micros-ntz",
+	KindFloat:              "float",
+	KindBinary:             "binary",
+	KindString:             "string",
+	KindTimeNTZ:            "time-ntz",
+	KindTimestampNanos:     "timestamp-nanos",
+	KindTimestampNanosNTZ:  "timestamp-nanos-ntz",
+	KindUUID:               "uuid",
+	KindArray:              "array",
+	KindObject:             "object",
+}
+
 func (k Kind) String() string {
-	switch k {
-	case KindNull:
-		return "null"
-	case KindBooleanTrue:
-		return "boolean-true"
-	case KindBooleanFalse:
-		return "boolean-false"
-	case KindInt8:
-		return "int8"
-	case KindInt16:
-		return "int16"
-	case KindInt32:
-		return "int32"
-	case KindInt64:
-		return "int64"
-	case KindDouble:
-		return "double"
-	case KindDecimal4:
-		return "decimal4"
-	case KindDecimal8:
-		return "decimal8"
-	case KindDecimal16:
-		return "decimal16"
-	case KindDate:
-		return "date"
-	case KindTimestampMicros:
-		return "timestamp-micros"
-	case KindTimestampMicrosNTZ:
-		return "timestamp-micros-ntz"
-	case KindFloat:
-		return "float"
-	case KindBinary:
-		return "binary"
-	case KindString:
-		return "string"
-	case KindTimeNTZ:
-		return "time-ntz"
-	case KindTimestampNanos:
-		return "timestamp-nanos"
-	case KindTimestampNanosNTZ:
-		return "timestamp-nanos-ntz"
-	case KindUUID:
-		return "uuid"
-	case KindArray:
-		return "array"
-	case KindObject:
-		return "object"
-	default:
-		return fmt.Sprintf("unknown kind(%d)", k)
+	s, ok := kindStrings[k]
+	if ok {
+		return s
 	}
+	return fmt.Sprintf("unknown kind(%d)", k)
 }
 
 type TimeUnit uint8
@@ -531,13 +525,37 @@ type Timestamp struct {
 	Value         int64
 }
 
+func (t Timestamp) AsTime() time.Time {
+	switch t.TimeUnit {
+	case Nanosecond:
+		secs := t.Value / nanosPerSecond
+		nanos := t.Value % nanosPerSecond
+		return time.Unix(secs, nanos).UTC()
+	default:
+		return time.UnixMicro(t.Value).UTC()
+	}
+}
+
 type Time Timestamp
 
+func (t Time) AsTime() time.Time {
+	return time.UnixMicro(t.Value).UTC()
+}
+
 type Date int32
+
+func (d Date) AsTime() time.Time {
+	unixSeconds := int64(d) * secondsPerDay
+	return time.Unix(unixSeconds, 0).UTC()
+}
 
 type Decimal4 struct {
 	Value int32
 	Scale uint8
+}
+
+func (d Decimal4) AsBigRat() *big.Rat {
+	return scaleBigInt(big.NewInt(int64(d.Value)), d.Scale)
 }
 
 type Decimal8 struct {
@@ -545,8 +563,45 @@ type Decimal8 struct {
 	Scale uint8
 }
 
+func (d Decimal8) AsBigRat() *big.Rat {
+	return scaleBigInt(big.NewInt(d.Value), d.Scale)
+}
+
 type Decimal16 struct {
 	ValueHi int64
 	ValueLo uint64
 	Scale   uint8
+}
+
+func (d Decimal16) AsBigRat() *big.Rat {
+	bi := big.NewInt(d.ValueHi)
+	bi.Lsh(bi, 64)
+	lo := bigUint(d.ValueLo)
+	return scaleBigInt(bi.Or(bi, lo), d.Scale)
+}
+
+func scaleBigInt(bi *big.Int, scale uint8) *big.Rat {
+	var result big.Rat
+	if scale == 0 {
+		result.SetInt(bi)
+	} else {
+		var biScale big.Int
+		biScale.Exp(bigIntTen, big.NewInt(int64(scale)), nil)
+		result.SetFrac(bi, &biScale)
+	}
+	return &result
+}
+
+func bigUint(v uint64) *big.Int {
+	// we don't want large value to be treated as negative
+	// so strip sign bit.
+	bi := big.NewInt(int64(v & math.MaxInt64))
+	if (v & 0x80000000) != 0 {
+		// If high bit set, set it via operation that
+		// won't treat it as negative sign.
+		var hiBit big.Int
+		hiBit.Lsh(bigIntOne, 63)
+		bi.Or(bi, &hiBit)
+	}
+	return bi
 }

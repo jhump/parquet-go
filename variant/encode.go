@@ -650,6 +650,8 @@ func encodeData(baseData []byte, val Shredded, oracle ShredOracle, metadataKey m
 
 func encodePrimitive(baseData []byte, val Shredded) []byte {
 	headerByte := byte(basicTypePrimitive) | (byte(val.kind) << 2)
+	// TODO: benchmark this switch. There are many cases, so it may be
+	// faster to pre-compute a map of kind -> function.
 	switch val.kind {
 	case KindNull, KindBooleanTrue, KindBooleanFalse:
 		return append(baseData, headerByte)

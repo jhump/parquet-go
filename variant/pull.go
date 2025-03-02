@@ -16,6 +16,27 @@ var (
 	errIterationStopped = fmt.Errorf("iteration stopped")
 )
 
+// Pull converts the “push-style” visit operation into a pull-style, accessed
+// by the two functions next and stop. This is very similar to how [iter.Pull]
+// and [iter.Pull2] transform an [iter.Seq] or [iter.Seq2]. A "push-style"
+// iterator is a function with a yield callback. In this case, the "push-style"
+// visit is a function that accepts a Visitor. A [Token] returned from the next
+// function maps to a particular method call on the visitor.
+//
+// The next functions returns either the next token or an error. When there
+// are no more tokens and the visit operation is complete, [io.EOF] will be
+// returned. Once any error is returned, the visit operation is complete, and
+// any subsequent calls to the next function will return the same error. If
+// the returned stop function is called before the visit operation is complete,
+// subsequent calls to next will return ErrPullerStopped.
+//
+// The caller should arrange for stop to be called when the operation is
+// complete. It is okay if stop is called after the visit operation is complete
+// and also okay to be called multiple times. So it is advised to defer it
+// like so:
+//
+//	next, stop := visitor.Pull(visitOperation)
+//	defer stop()
 func Pull(action func(Visitor) error) (next func() (Token, error), stop func()) {
 	iterator := func(yield func(Token, error) bool) {
 		err := action(&iterVisitor{yield: yield})
@@ -31,6 +52,8 @@ func Pull(action func(Visitor) error) (next func() (Token, error), stop func()) 
 		next: nextTok,
 		stop: stop,
 	}
+	// Just in case caller forgets to call stop(), we'll do it automatically
+	// when the underlying pullStream is garbage collected.
 	runtime.AddCleanup(dec, func(_ any) { stop() }, nil)
 	return dec.nextToken, stop
 }
@@ -74,6 +97,7 @@ const (
 	TokenTypeBeginArray
 	TokenTypeEndArray
 	TokenTypeBeginObject
+	TokenTypeObjectField
 	TokenTypeEndObject
 	TokenTypeEOF
 )
@@ -90,6 +114,8 @@ func (t TokenType) String() string {
 		return "end-array"
 	case TokenTypeBeginObject:
 		return "begin-object"
+	case TokenTypeObjectField:
+		return "object-field"
 	case TokenTypeEndObject:
 		return "end-object"
 	case TokenTypeEOF:
@@ -119,6 +145,11 @@ func (t Token) Type() TokenType {
 }
 
 func (t Token) Value() (Shredded, bool) {
+	if TokenType(t.kind) == TokenTypeObjectField {
+		sh := Shredded(t)
+		sh.kind = KindString
+		return sh, true
+	}
 	if (t.kind & 0x80) != 0 {
 		sh := Shredded(t)
 		sh.kind = ^sh.kind
@@ -280,7 +311,9 @@ func (v *iterVisitor) BeginObject() error {
 }
 
 func (v *iterVisitor) ObjectField(name string) error {
-	if !v.yield(valToToken(ShreddedValueOfString(name)), nil) {
+	tok := valToToken(ShreddedValueOfString(name))
+	tok.kind = Kind(TokenTypeObjectField)
+	if !v.yield(tok, nil) {
 		return errIterationStopped
 	}
 	return nil

@@ -110,7 +110,7 @@ func marshal(v reflect.Value, visitor Visitor) error {
 			return err
 		}
 	case reflect.String:
-		return visitor.VisitNull()
+		return visitor.VisitString(v.String())
 	case reflect.Struct:
 		if err := visitor.BeginObject(); err != nil {
 			return err
@@ -149,15 +149,17 @@ func marshal(v reflect.Value, visitor Visitor) error {
 				return err
 			}
 		}
-	case reflect.Interface, reflect.Ptr:
+	case reflect.Interface, reflect.Pointer:
 		if v.IsNil() {
 			return visitor.VisitNull()
 		}
 		return marshal(v.Elem(), visitor)
-	case reflect.Func, reflect.Chan:
+	case reflect.Func, reflect.Chan, reflect.UnsafePointer:
 		if v.IsNil() {
 			return visitor.VisitNull()
 		}
+	case reflect.Invalid:
+		// break to fallback below
 	}
 	return fmt.Errorf("cannot marshal value of type %v", v.Kind())
 }

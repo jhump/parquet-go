@@ -1,6 +1,9 @@
 package variant
 
-import "github.com/google/uuid"
+import (
+	"errors"
+	"github.com/google/uuid"
+)
 
 // Visitor accepts values decoded from a variant.
 //
@@ -64,4 +67,186 @@ type Visitor interface {
 	// EndObject is the closing bookend of a call to BeginObject. It
 	// indicates that all fields have been visited.
 	EndObject() error
+}
+
+// SimpleVisitor is a base visitor implementation that constructs a Shredded
+// value for all leaf values and passes to the given HandleValue function
+// Visit calls for non-leaf values delegate to the relevant Handle* function.
+// If any of the given functions is nil, the visitor will simply return nil
+// for that visit method, so it can also serve as a no-op visitor. Because
+// the zero value is a no-op, it can be embedded in a struct to implement
+// Visitor and only override implement the methods of interest.
+type SimpleVisitor struct {
+	// Visits a leaf value.
+	HandleValue func(Shredded) error
+
+	HandleBeginArray  func() error
+	HandleEndArray    func() error
+	HandleBeginObject func() error
+	HandleObjectField func(name string) error
+	HandleEndObject   func() error
+}
+
+var _ Visitor = (*SimpleVisitor)(nil)
+
+func (s *SimpleVisitor) VisitNull() error {
+	if s.HandleValue == nil {
+		return nil
+	}
+	return s.HandleValue(ShreddedValueOfNull())
+}
+
+func (s *SimpleVisitor) VisitBool(b bool) error {
+	if s.HandleValue == nil {
+		return nil
+	}
+	return s.HandleValue(ShreddedValueOfBool(b))
+}
+
+func (s *SimpleVisitor) VisitInt8(i int8) error {
+	if s.HandleValue == nil {
+		return nil
+	}
+	return s.HandleValue(ShreddedValueOfInt8(i))
+}
+
+func (s *SimpleVisitor) VisitInt16(i int16) error {
+	if s.HandleValue == nil {
+		return nil
+	}
+	return s.HandleValue(ShreddedValueOfInt16(i))
+}
+
+func (s *SimpleVisitor) VisitInt32(i int32) error {
+	if s.HandleValue == nil {
+		return nil
+	}
+	return s.HandleValue(ShreddedValueOfInt32(i))
+}
+
+func (s *SimpleVisitor) VisitInt64(i int64) error {
+	if s.HandleValue == nil {
+		return nil
+	}
+	return s.HandleValue(ShreddedValueOfInt64(i))
+}
+
+func (s *SimpleVisitor) VisitFloat32(f float32) error {
+	if s.HandleValue == nil {
+		return nil
+	}
+	return s.HandleValue(ShreddedValueOfFloat32(f))
+}
+
+func (s *SimpleVisitor) VisitFloat64(f float64) error {
+	if s.HandleValue == nil {
+		return nil
+	}
+	return s.HandleValue(ShreddedValueOfFloat64(f))
+}
+
+func (s *SimpleVisitor) VisitDecimal4(decimal4 Decimal4) error {
+	if s.HandleValue == nil {
+		return nil
+	}
+	return s.HandleValue(ShreddedValueOfDecimal4(decimal4))
+}
+
+func (s *SimpleVisitor) VisitDecimal8(decimal8 Decimal8) error {
+	if s.HandleValue == nil {
+		return nil
+	}
+	return s.HandleValue(ShreddedValueOfDecimal8(decimal8))
+}
+
+func (s *SimpleVisitor) VisitDecimal16(decimal16 Decimal16) error {
+	if s.HandleValue == nil {
+		return nil
+	}
+	return s.HandleValue(ShreddedValueOfDecimal16(decimal16))
+}
+
+func (s *SimpleVisitor) VisitDate(date Date) error {
+	if s.HandleValue == nil {
+		return nil
+	}
+	return s.HandleValue(ShreddedValueOfDate(date))
+}
+
+func (s *SimpleVisitor) VisitTime(time Time) error {
+	if s.HandleValue == nil {
+		return nil
+	}
+	t, ok := ShreddedValueOfTime(time)
+	if !ok {
+		return errors.New("encountered invalid time value")
+	}
+	return s.HandleValue(t)
+}
+
+func (s *SimpleVisitor) VisitTimestamp(timestamp Timestamp) error {
+	if s.HandleValue == nil {
+		return nil
+	}
+	ts, ok := ShreddedValueOfTimestamp(timestamp)
+	if !ok {
+		return errors.New("encountered invalid timestamp value")
+	}
+	return s.HandleValue(ts)
+}
+
+func (s *SimpleVisitor) VisitBytes(bytes []byte) error {
+	if s.HandleValue == nil {
+		return nil
+	}
+	return s.HandleValue(ShreddedValueOfBytes(bytes))
+}
+
+func (s *SimpleVisitor) VisitString(str string) error {
+	if s.HandleValue == nil {
+		return nil
+	}
+	return s.HandleValue(ShreddedValueOfString(str))
+}
+
+func (s *SimpleVisitor) VisitUUID(u uuid.UUID) error {
+	if s.HandleValue == nil {
+		return nil
+	}
+	return s.HandleValue(ShreddedValueOfUUID(u))
+}
+
+func (s *SimpleVisitor) BeginArray() error {
+	if s.HandleBeginArray == nil {
+		return nil
+	}
+	return s.HandleBeginArray()
+}
+
+func (s *SimpleVisitor) EndArray() error {
+	if s.HandleEndArray == nil {
+		return nil
+	}
+	return s.HandleEndArray()
+}
+
+func (s *SimpleVisitor) BeginObject() error {
+	if s.HandleBeginObject == nil {
+		return nil
+	}
+	return s.HandleBeginObject()
+}
+
+func (s *SimpleVisitor) ObjectField(name string) error {
+	if s.HandleObjectField == nil {
+		return nil
+	}
+	return s.HandleObjectField(name)
+}
+
+func (s *SimpleVisitor) EndObject() error {
+	if s.HandleEndObject == nil {
+		return nil
+	}
+	return s.HandleEndObject()
 }
