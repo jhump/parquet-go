@@ -12,9 +12,23 @@ import (
 )
 
 var (
-	errAlreadyVisited   = errors.New("invalid state: value already visited")
+	// ErrAlreadyVisited may be returned by a visitor that has already been visited.
+	// Many visitors are "one shot", meaning they can be visited with a single value.
+	// Some one-shot visitors may be re-used only after explicitly resetting them.
+	ErrAlreadyVisited = errors.New("invalid state: value already visited")
+
+	errNoValueVisited   = errors.New("invalid state: no value visited")
+	errVisitIncomplete  = errors.New("invalid state: still visiting value")
+	errMustReset        = fmt.Errorf("%w; call Reset before visiting again", ErrAlreadyVisited)
 	errInvalidTime      = errors.New("invalid time")
 	errInvalidTimestamp = errors.New("invalid timestamp")
+
+	errCannotCallEndArray       = errors.New("invalid state: EndArray called but not visiting an array")
+	errCannotCallEndObject      = errors.New("invalid state: EndObject called but not visiting an object")
+	errCannotCallObjectField    = errors.New("invalid state: ObjectField called but not visiting an object")
+	errObjectFieldAlreadyCalled = errors.New("invalid state: ObjectField already called")
+	errObjectFieldNeverCalled   = errors.New("invalid state: ObjectField never called")
+	errNoFieldValueVisited      = errors.New("invalid state: no field value visited")
 )
 
 // Encoder is a visitor that encodes the visited value. After the
@@ -123,13 +137,13 @@ func (e *encoder) Encode() (Value, error) {
 	}
 
 	if e.stack == nil && e.err == nil {
-		return Value{}, errors.New("invalid state: no value ever visited")
+		return Value{}, errNoValueVisited
 	}
-	if e.err != nil && !errors.Is(e.err, errAlreadyVisited) {
+	if e.err != nil && !errors.Is(e.err, ErrAlreadyVisited) {
 		return Value{}, e.err
 	}
 	if e.err == nil {
-		return Value{}, errors.New("invalid state: still visiting value")
+		return Value{}, errVisitIncomplete
 	}
 	if !e.sortMetadata {
 		// We've already encoded everything as we wnt.
@@ -235,24 +249,30 @@ func (e *encoder) VisitUUID(val uuid.UUID) error {
 	return e.accept(ShreddedValueOfUUID(val))
 }
 
-func (e *encoder) BeginArray() error {
+func (e *encoder) BeginArray(sizeHint int) error {
 	return e.push(func(entry *encodeStackEntry) {
 		entry.isArray = true
+		if sizeHint >= 0 {
+			entry.cap = uint(sizeHint)
+		}
 	})
 }
 
 func (e *encoder) EndArray() error {
 	return e.pop(func(entry *encodeStackEntry) error {
 		if !entry.isArray {
-			return errors.New("invalid state: EndArray called but not visiting an array")
+			return errCannotCallEndArray
 		}
 		return nil
 	})
 }
 
-func (e *encoder) BeginObject() error {
+func (e *encoder) BeginObject(sizeHint int) error {
 	return e.push(func(entry *encodeStackEntry) {
 		entry.isObject = true
+		if sizeHint >= 0 {
+			entry.cap = uint(sizeHint)
+		}
 	})
 }
 
@@ -263,10 +283,10 @@ func (e *encoder) ObjectField(name string) error {
 	top := len(e.stack) - 1
 	entry := &e.stack[top]
 	if !entry.isObject {
-		return errors.New("invalid state: ObjectField called but not visiting an object")
+		return errCannotCallObjectField
 	}
 	if entry.isSet {
-		return errors.New("invalid state: ObjectField already called")
+		return errObjectFieldAlreadyCalled
 	}
 	entry.isSet = true
 	entry.pendingField = name
@@ -276,7 +296,7 @@ func (e *encoder) ObjectField(name string) error {
 func (e *encoder) EndObject() error {
 	return e.pop(func(entry *encodeStackEntry) error {
 		if !entry.isObject {
-			return errors.New("invalid state: EndObject called but not visiting an object")
+			return errCannotCallEndObject
 		}
 		return nil
 	})
@@ -320,7 +340,7 @@ func (e *encoder) accept(val Shredded) error {
 	// done!
 	e.value = e.toData(val)
 	// set sentinel error to prevent future visit calls
-	e.err = errAlreadyVisited
+	e.err = errMustReset
 	return nil
 }
 
@@ -347,7 +367,7 @@ func (e *encoder) pop(check func(*encodeStackEntry) error) error {
 	}
 	e.stack = e.stack[:top]
 	// If we get an error at this some point, something has gone
-	// wrong an internal state may be bad. So we need to call
+	// wrong and internal state may be bad. So we need to call
 	// e.error(...) for any error returned so that the encoder
 	// cannot subsequently be used.
 	return e.error(e.accept(val))
@@ -382,7 +402,15 @@ type encodeStackEntry struct {
 func (e *encodeStackEntry) accept(val Shredded) (bool, error) {
 	switch {
 	case e.isArray:
-		vals := unsafe.Slice((*Data)(unsafe.Pointer(e.ptr)), e.cap)[:e.len]
+		var vals []Data
+		if e.ptr == nil {
+			if e.cap > 0 {
+				// e.cap is a size hint that we'll use to pre-allocate
+				vals = make([]Data, 0, e.cap)
+			}
+		} else {
+			vals = unsafe.Slice((*Data)(unsafe.Pointer(e.ptr)), e.cap)[:e.len]
+		}
 		vals = append(vals, e.encoder.toData(val))
 		e.ptr = (*byte)(unsafe.Pointer(&vals[0]))
 		e.len = uint(len(vals))
@@ -390,9 +418,17 @@ func (e *encodeStackEntry) accept(val Shredded) (bool, error) {
 		return false, nil
 	case e.isObject:
 		if !e.isSet {
-			return false, errors.New("invalid state: ObjectField never called")
+			return false, errObjectFieldNeverCalled
 		}
-		vals := unsafe.Slice((*FieldData)(unsafe.Pointer(e.ptr)), e.cap)[:e.len]
+		var vals []FieldData
+		if e.ptr == nil {
+			if e.cap > 0 {
+				// e.cap is a size hint that we'll use to pre-allocate
+				vals = make([]FieldData, 0, e.cap)
+			}
+		} else {
+			vals = unsafe.Slice((*FieldData)(unsafe.Pointer(e.ptr)), e.cap)[:e.len]
+		}
 		vals = append(vals, FieldData{Name: e.pendingField, Data: e.encoder.toData(val)})
 		e.ptr = (*byte)(unsafe.Pointer(&vals[0]))
 		e.len = uint(len(vals))
@@ -401,7 +437,7 @@ func (e *encodeStackEntry) accept(val Shredded) (bool, error) {
 		e.isSet = false
 		return false, nil
 	case e.isSet:
-		return false, errors.New("invalid state: already visited value")
+		return false, ErrAlreadyVisited
 	default:
 		e.val = val
 		e.isSet = true
@@ -415,13 +451,13 @@ func (e *encodeStackEntry) result() (Shredded, error) {
 		return Shredded{kind: KindArray, p: e.ptr, v1: uint64(e.len)}, nil
 	case e.isObject:
 		if e.isSet {
-			return Shredded{}, errors.New("invalid state: no field value visited")
+			return Shredded{}, errNoFieldValueVisited
 		}
 		return Shredded{kind: KindObject, p: e.ptr, v1: uint64(e.len)}, nil
 	case e.isSet:
 		return e.val, nil
 	default:
-		return Shredded{}, errors.New("invalid state: no value visited")
+		return Shredded{}, errNoValueVisited
 	}
 }
 

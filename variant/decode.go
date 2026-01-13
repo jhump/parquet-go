@@ -13,11 +13,7 @@ import (
 
 var errMalformedMetadata = errors.New("metadata is metadata")
 
-func Decode(src Value, visitor Visitor, opts ...DecodeOption) error {
-	var options decodeOptions
-	for _, opt := range opts {
-		opt.apply(&options)
-	}
+func decode(src Value, visitor Visitor, options decodeOptions) error {
 	if len(src.Metadata) == 0 {
 		return fmt.Errorf("%w: metadata cannot be empty", errMalformedMetadata)
 	}
@@ -217,7 +213,11 @@ func decodeData(data *Data, visitor Visitor, dict metadataDict) error {
 		if t := basicType(data.Unshredded[0] & 3); t != basicTypeObject {
 			return fmt.Errorf("only object values can contain both shredded and unshredded data; instead found unshredded data for %v", t)
 		}
-		if err := visitor.BeginObject(); err != nil {
+		var decoder unshreddedObjectDecoder
+		if err := decoder.init(data.Unshredded); err != nil {
+			return err
+		}
+		if err := visitor.BeginObject(len(fields) + decoder.numElements); err != nil {
 			return err
 		}
 		fieldsSeen := make(map[string]struct{}, len(fields))
@@ -233,7 +233,7 @@ func decodeData(data *Data, visitor Visitor, dict metadataDict) error {
 				return prefixErr(field.Name, err)
 			}
 		}
-		if err := decodeUnshreddedObject(data.Unshredded, fieldsSeen, visitor, dict); err != nil {
+		if err := decoder.decode(fieldsSeen, visitor, dict); err != nil {
 			return err
 		}
 		return visitor.EndObject()
@@ -250,18 +250,26 @@ func decodeUnshredded(data []byte, visitor Visitor, dict metadataDict) error {
 	t := basicType(data[0] & 3)
 	switch t {
 	case basicTypeObject:
-		if err := visitor.BeginObject(); err != nil {
+		var decoder unshreddedObjectDecoder
+		if err := decoder.init(data); err != nil {
 			return err
 		}
-		if err := decodeUnshreddedObject(data, make(map[string]struct{}), visitor, dict); err != nil {
+		if err := visitor.BeginObject(decoder.numElements); err != nil {
+			return err
+		}
+		if err := decoder.decode(make(map[string]struct{}), visitor, dict); err != nil {
 			return err
 		}
 		return visitor.EndObject()
 	case basicTypeArray:
-		if err := visitor.BeginArray(); err != nil {
+		var decoder unshreddedArrayDecoder
+		if err := decoder.init(data); err != nil {
 			return err
 		}
-		if err := decodeUnshreddedArray(data, visitor, dict); err != nil {
+		if err := visitor.BeginArray(decoder.numElements); err != nil {
+			return err
+		}
+		if err := decoder.decode(visitor, dict); err != nil {
 			return err
 		}
 		return visitor.EndArray()
@@ -333,7 +341,7 @@ func decodeShredded(s Shredded, visitor Visitor, dict metadataDict) error {
 	case KindArray:
 		ptr := (*Data)(unsafe.Pointer(s.p))
 		elems := unsafe.Slice(ptr, s.v1)
-		if err := visitor.BeginArray(); err != nil {
+		if err := visitor.BeginArray(len(elems)); err != nil {
 			return err
 		}
 		for i := range elems {
@@ -346,7 +354,7 @@ func decodeShredded(s Shredded, visitor Visitor, dict metadataDict) error {
 		ptr := (*FieldData)(unsafe.Pointer(s.p))
 		fields := unsafe.Slice(ptr, s.v1)
 		fieldsSeen := make(map[string]struct{}, len(fields))
-		if err := visitor.BeginObject(); err != nil {
+		if err := visitor.BeginObject(len(fields)); err != nil {
 			return err
 		}
 		for _, field := range fields {
@@ -368,14 +376,21 @@ func decodeShredded(s Shredded, visitor Visitor, dict metadataDict) error {
 
 }
 
-func decodeUnshreddedObject(data []byte, fieldsSeen map[string]struct{}, visitor Visitor, dict metadataDict) error {
-	offsetSize := int((data[0]>>2)&3) + 1
-	extractOffset, err := extractFuncForSize(offsetSize)
+type unshreddedObjectDecoder struct {
+	data                                 []byte
+	offsetSize, fieldIDSize, numElements int
+	extractOffset, extractFieldID        func([]byte) int
+}
+
+func (d *unshreddedObjectDecoder) init(data []byte) error {
+	d.offsetSize = int((data[0]>>2)&3) + 1
+	var err error
+	d.extractOffset, err = extractFuncForSize(d.offsetSize)
 	if err != nil {
 		return err
 	}
-	fieldIDSize := int((data[0]>>4)&3) + 1
-	extractFieldID, err := extractFuncForSize(fieldIDSize)
+	d.fieldIDSize = int((data[0]>>4)&3) + 1
+	d.extractFieldID, err = extractFuncForSize(d.fieldIDSize)
 	if err != nil {
 		return err
 	}
@@ -394,8 +409,16 @@ func decodeUnshreddedObject(data []byte, fieldsSeen map[string]struct{}, visitor
 		return fmt.Errorf("need %d bytes to read the number of elements but only %d bytes available",
 			numElementsSize, len(data))
 	}
-	numElements := extractNumElements(data)
-	data = data[numElementsSize:]
+	d.numElements = extractNumElements(data)
+	d.data = data[numElementsSize:]
+	return nil
+}
+
+func (d *unshreddedObjectDecoder) decode(fieldsSeen map[string]struct{}, visitor Visitor, dict metadataDict) error {
+	data := d.data
+	offsetSize, fieldIDSize, numElements := d.offsetSize, d.fieldIDSize, d.numElements
+	extractOffset, extractFieldID := d.extractOffset, d.extractFieldID
+
 	fieldIDsLength := numElements * fieldIDSize
 	offsetsLength := (numElements + 1) * offsetSize
 	totalLength := fieldIDsLength + offsetsLength
@@ -433,9 +456,16 @@ func decodeUnshreddedObject(data []byte, fieldsSeen map[string]struct{}, visitor
 	return nil
 }
 
-func decodeUnshreddedArray(data []byte, visitor Visitor, dict metadataDict) error {
-	offsetSize := int((data[0]>>2)&3) + 1
-	extractOffset, err := extractFuncForSize(offsetSize)
+type unshreddedArrayDecoder struct {
+	data                    []byte
+	offsetSize, numElements int
+	extractOffset           func([]byte) int
+}
+
+func (d *unshreddedArrayDecoder) init(data []byte) error {
+	d.offsetSize = int((data[0]>>2)&3) + 1
+	var err error
+	d.extractOffset, err = extractFuncForSize(d.offsetSize)
 	if err != nil {
 		return err
 	}
@@ -454,8 +484,16 @@ func decodeUnshreddedArray(data []byte, visitor Visitor, dict metadataDict) erro
 		return fmt.Errorf("need %d bytes to read the number of elements but only %d bytes available",
 			numElementsSize, len(data))
 	}
-	numElements := extractNumElements(data)
-	data = data[numElementsSize:]
+	d.numElements = extractNumElements(data)
+	d.data = data[numElementsSize:]
+	return nil
+}
+
+func (d *unshreddedArrayDecoder) decode(visitor Visitor, dict metadataDict) error {
+	data := d.data
+	offsetSize, numElements := d.offsetSize, d.numElements
+	extractOffset := d.extractOffset
+
 	length := (numElements + 1) * offsetSize
 	if len(data) < length {
 		return fmt.Errorf("offsets for %d elements need %d bytes but only %d bytes available",

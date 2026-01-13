@@ -36,6 +36,8 @@ type Shredded struct {
 	// or array of FieldData for object
 	p *byte
 
+	u unsafe.Pointer
+
 	// scale for decimal values
 	s uint8
 
@@ -538,8 +540,8 @@ func (t Timestamp) AsTime() time.Time {
 
 type Time Timestamp
 
-func (t Time) AsTime() time.Time {
-	return time.UnixMicro(t.Value).UTC()
+func (t Time) AsDuration() time.Duration {
+	return time.Duration(t.Value) * time.Microsecond
 }
 
 type Date int32

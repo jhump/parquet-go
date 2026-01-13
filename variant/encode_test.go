@@ -4,7 +4,7 @@ import "testing"
 
 func TestEncoder(t *testing.T) {
 	enc := &encoder{}
-	err := enc.BeginArray()
+	err := enc.BeginArray(-1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -16,7 +16,7 @@ func TestEncoder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = enc.BeginObject()
+	err = enc.BeginObject(-1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +24,7 @@ func TestEncoder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = enc.BeginArray()
+	err = enc.BeginArray(-1)
 	if err != nil {
 		t.Fatal(err)
 	}

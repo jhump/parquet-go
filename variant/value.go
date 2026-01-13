@@ -17,9 +17,12 @@ type Value struct {
 
 // Decode decodes the value represented by v and calls the appropriate
 // methods of visitor.
-func (v Value) Decode(visitor Visitor) error {
-	// TODO
-	return nil
+func (v Value) Decode(visitor Visitor, opts ...DecodeOption) error {
+	var options decodeOptions
+	for _, opt := range opts {
+		opt.apply(&options)
+	}
+	return decode(v, visitor, options)
 }
 
 // Data represents encoded variant data. A Value may encode a composite

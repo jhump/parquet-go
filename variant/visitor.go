@@ -51,7 +51,11 @@ type Visitor interface {
 	// BeginArray indicates that the variant is an array value. Other
 	// Visit* methods will be called, zero or more times, for each
 	// element in the array, followed by a call to EndArray.
-	BeginArray() error
+	//
+	// The given size may be -1 to indicate that the size is not known.
+	// Otherwise, it indicates the number of elements in the array.
+	// EndArray will be called visiting that many values.
+	BeginArray(sizeHint int) error
 	// EndArray is the closing bookend of a call to BeginArray. It
 	// indicates that all elements have been visited.
 	EndArray() error
@@ -60,7 +64,11 @@ type Visitor interface {
 	// will subsequently alternate between ObjectField and then Other
 	// Visit* methods, for each field in the object, followed by a call
 	// to EndObject.
-	BeginObject() error
+	//
+	// The given size may be -1 to indicate that the size is not known.
+	// Otherwise, it indicates the number of fields in the object.
+	// EndObject will be called visiting that many field values.
+	BeginObject(sizeHint int) error
 	// ObjectField indicates the name of the field whose value is next
 	// to be visited.
 	ObjectField(name string) error
@@ -80,9 +88,9 @@ type SimpleVisitor struct {
 	// Visits a leaf value.
 	HandleValue func(Shredded) error
 
-	HandleBeginArray  func() error
+	HandleBeginArray  func(sizeHint int) error
 	HandleEndArray    func() error
-	HandleBeginObject func() error
+	HandleBeginObject func(sizeHint int) error
 	HandleObjectField func(name string) error
 	HandleEndObject   func() error
 }
@@ -216,11 +224,11 @@ func (s *SimpleVisitor) VisitUUID(u uuid.UUID) error {
 	return s.HandleValue(ShreddedValueOfUUID(u))
 }
 
-func (s *SimpleVisitor) BeginArray() error {
+func (s *SimpleVisitor) BeginArray(sizeHint int) error {
 	if s.HandleBeginArray == nil {
 		return nil
 	}
-	return s.HandleBeginArray()
+	return s.HandleBeginArray(sizeHint)
 }
 
 func (s *SimpleVisitor) EndArray() error {
@@ -230,11 +238,11 @@ func (s *SimpleVisitor) EndArray() error {
 	return s.HandleEndArray()
 }
 
-func (s *SimpleVisitor) BeginObject() error {
+func (s *SimpleVisitor) BeginObject(sizeHint int) error {
 	if s.HandleBeginObject == nil {
 		return nil
 	}
-	return s.HandleBeginObject()
+	return s.HandleBeginObject(sizeHint)
 }
 
 func (s *SimpleVisitor) ObjectField(name string) error {

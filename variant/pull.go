@@ -145,17 +145,23 @@ func (t Token) Type() TokenType {
 }
 
 func (t Token) Value() (Shredded, bool) {
-	if TokenType(t.kind) == TokenTypeObjectField {
+	switch TokenType(t.kind) {
+	case TokenTypeObjectField:
 		sh := Shredded(t)
 		sh.kind = KindString
 		return sh, true
-	}
-	if (t.kind & 0x80) != 0 {
+	case TokenTypeBeginArray, TokenTypeEndArray:
 		sh := Shredded(t)
-		sh.kind = ^sh.kind
+		sh.kind = KindInt64
 		return sh, true
+	default:
+		if (t.kind & 0x80) != 0 {
+			sh := Shredded(t)
+			sh.kind = ^sh.kind
+			return sh, true
+		}
+		return Shredded{}, false
 	}
-	return Shredded{}, false
 }
 
 type iterVisitor struct {
@@ -289,8 +295,10 @@ func (v *iterVisitor) VisitUUID(u uuid.UUID) error {
 	return nil
 }
 
-func (v *iterVisitor) BeginArray() error {
-	if !v.yield(typeToToken(TokenTypeBeginArray), nil) {
+func (v *iterVisitor) BeginArray(sizeHint int) error {
+	tok := valToToken(ShreddedValueOfInt64(int64(sizeHint)))
+	tok.kind = Kind(TokenTypeBeginArray)
+	if !v.yield(tok, nil) {
 		return errIterationStopped
 	}
 	return nil
@@ -303,8 +311,10 @@ func (v *iterVisitor) EndArray() error {
 	return nil
 }
 
-func (v *iterVisitor) BeginObject() error {
-	if !v.yield(typeToToken(TokenTypeBeginObject), nil) {
+func (v *iterVisitor) BeginObject(sizeHint int) error {
+	tok := valToToken(ShreddedValueOfInt64(int64(sizeHint)))
+	tok.kind = Kind(TokenTypeBeginObject)
+	if !v.yield(tok, nil) {
 		return errIterationStopped
 	}
 	return nil

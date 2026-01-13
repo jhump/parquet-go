@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"strconv"
 	"time"
+	"unsafe"
 
 	"github.com/google/uuid"
 )
@@ -69,16 +70,16 @@ func DecodeJSONToValue(r io.Reader, opts ...EncodeOption) (Value, error) {
 
 func EncodeValueToJSON(w io.Writer, v Value, opts ...EncodeJSONOption) error {
 	enc := NewJSONEncoder(w, opts...)
-	return Decode(v, enc)
+	return v.Decode(enc)
 }
 
 func EncodeValueToJSONWithDecodeOptions(w io.Writer, v Value, decodeOpts []DecodeOption, opts ...EncodeJSONOption) error {
 	enc := NewJSONEncoder(w, opts...)
-	return Decode(v, enc, decodeOpts...)
+	return v.Decode(enc, decodeOpts...)
 }
 
 func NewJSONEncoder(w io.Writer, opts ...EncodeJSONOption) Visitor {
-	enc := &jsonEncoder{w: w, state: []jsonEncodeFrame{}}
+	enc := &jsonEncoder{w: w, state: []jsonEncodeFrame{{}}}
 	for _, opt := range opts {
 		opt.apply(enc)
 	}
@@ -104,13 +105,13 @@ func WithJSONInt64Mode(mode JSONInt64Mode) EncodeJSONOption {
 type JSONInt64Mode uint8
 
 const (
-	// JSONIntegersAsNumbers means that integer values are always encoded as
+	// JSONInt64sAsNumbers means that integer values are always encoded as
 	// JSON numbers. This is the default mode.
 	JSONInt64sAsNumbers JSONInt64Mode = iota
-	// JSONIntegersAsStrings means that integer values are always encoded as
+	// JSONInt64sAsStrings means that integer values are always encoded as
 	// JSON strings, even those with small magnitude.
 	JSONInt64sAsStrings
-	// JSONLargeIntegersAsStrings means that integers that are too large to
+	// JSONLargeInt64sAsStrings means that integers that are too large to
 	// perfectly represent with a IEEE 64-bit floating point values will be
 	// encoded as a JSON string, so that systems that always unmarshal JSON
 	// numbers into such floats will not lose fidelity for large numbers.
@@ -151,7 +152,7 @@ func decodeJSON(dec *json.Decoder, tok json.Token, visitor Visitor) error {
 }
 
 func decodeJSONArray(dec *json.Decoder, visitor Visitor) error {
-	if err := visitor.BeginArray(); err != nil {
+	if err := visitor.BeginArray(-1); err != nil {
 		return err
 	}
 	for {
@@ -169,7 +170,7 @@ func decodeJSONArray(dec *json.Decoder, visitor Visitor) error {
 }
 
 func decodeJSONObject(dec *json.Decoder, visitor Visitor) error {
-	if err := visitor.BeginObject(); err != nil {
+	if err := visitor.BeginObject(-1); err != nil {
 		return err
 	}
 	for {
@@ -197,6 +198,10 @@ func decodeJSONObject(dec *json.Decoder, visitor Visitor) error {
 	}
 }
 
+func stringData(str string) []byte {
+	return unsafe.Slice(unsafe.StringData(str), len(str))
+}
+
 type jsonEncoder struct {
 	w       io.Writer
 	intMode JSONInt64Mode
@@ -204,22 +209,22 @@ type jsonEncoder struct {
 }
 
 func (j *jsonEncoder) VisitNull() error {
-	if err := j.checkState(); err != nil {
+	if err := j.checkStateForValue(); err != nil {
 		return err
 	}
-	_, err := j.w.Write([]byte{'n', 'u', 'l', 'l'})
+	_, err := j.w.Write(stringData("null"))
 	return err
 }
 
 func (j *jsonEncoder) VisitBool(b bool) error {
-	if err := j.checkState(); err != nil {
+	if err := j.checkStateForValue(); err != nil {
 		return err
 	}
 	var err error
 	if b {
-		_, err = j.w.Write([]byte{'t', 'r', 'u', 'e'})
+		_, err = j.w.Write(stringData("true"))
 	} else {
-		_, err = j.w.Write([]byte{'f', 'a', 'l', 's', 'e'})
+		_, err = j.w.Write(stringData("false"))
 	}
 	return err
 }
@@ -237,7 +242,7 @@ func (j *jsonEncoder) VisitInt32(i int32) error {
 }
 
 func (j *jsonEncoder) visitInt(i int64) error {
-	if err := j.checkState(); err != nil {
+	if err := j.checkStateForValue(); err != nil {
 		return err
 	}
 	_, err := j.w.Write([]byte(strconv.FormatInt(i, 10)))
@@ -245,7 +250,7 @@ func (j *jsonEncoder) visitInt(i int64) error {
 }
 
 func (j *jsonEncoder) VisitInt64(i int64) error {
-	if err := j.checkState(); err != nil {
+	if err := j.checkStateForValue(); err != nil {
 		return err
 	}
 	intStr := strconv.FormatInt(i, 10)
@@ -264,9 +269,6 @@ func (j *jsonEncoder) VisitInt64(i int64) error {
 }
 
 func (j *jsonEncoder) VisitFloat32(f float32) error {
-	if err := j.checkState(); err != nil {
-		return err
-	}
 	return j.visitFloat(float64(f), 32)
 }
 
@@ -275,7 +277,7 @@ func (j *jsonEncoder) VisitFloat64(f float64) error {
 }
 
 func (j *jsonEncoder) visitFloat(f float64, bits int) error {
-	if err := j.checkState(); err != nil {
+	if err := j.checkStateForValue(); err != nil {
 		return err
 	}
 	if math.IsNaN(f) || math.IsInf(f, 0) {
@@ -298,7 +300,7 @@ func (j *jsonEncoder) VisitDecimal16(dec Decimal16) error {
 }
 
 func (j *jsonEncoder) visitBigRat(br *big.Rat) error {
-	if err := j.checkState(); err != nil {
+	if err := j.checkStateForValue(); err != nil {
 		return err
 	}
 	str := br.String()
@@ -307,21 +309,21 @@ func (j *jsonEncoder) visitBigRat(br *big.Rat) error {
 }
 
 func (j *jsonEncoder) VisitDate(date Date) error {
-	if err := j.checkState(); err != nil {
+	if err := j.checkStateForValue(); err != nil {
 		return err
 	}
 	return j.writeString(date.AsTime().Format(dateFormat))
 }
 
 func (j *jsonEncoder) VisitTime(time Time) error {
-	if err := j.checkState(); err != nil {
+	if err := j.checkStateForValue(); err != nil {
 		return err
 	}
 	return j.writeString(time.AsTime().Format(timeFormat))
 }
 
 func (j *jsonEncoder) VisitTimestamp(timestamp Timestamp) error {
-	if err := j.checkState(); err != nil {
+	if err := j.checkStateForValue(); err != nil {
 		return err
 	}
 	var format string
@@ -343,27 +345,27 @@ func (j *jsonEncoder) VisitTimestamp(timestamp Timestamp) error {
 }
 
 func (j *jsonEncoder) VisitBytes(bytes []byte) error {
-	if err := j.checkState(); err != nil {
+	if err := j.checkStateForValue(); err != nil {
 		return err
 	}
 	return j.writeString(base64.StdEncoding.EncodeToString(bytes))
 }
 
 func (j *jsonEncoder) VisitString(s string) error {
-	if err := j.checkState(); err != nil {
+	if err := j.checkStateForValue(); err != nil {
 		return err
 	}
 	return j.writeString(s)
 }
 
 func (j *jsonEncoder) VisitUUID(uuid uuid.UUID) error {
-	if err := j.checkState(); err != nil {
+	if err := j.checkStateForValue(); err != nil {
 		return err
 	}
 	return j.writeString(uuid.String())
 }
 
-func (j *jsonEncoder) BeginArray() error {
+func (j *jsonEncoder) BeginArray(_ int) error {
 	if err := j.push(json.Delim('[')); err != nil {
 		return err
 	}
@@ -372,14 +374,14 @@ func (j *jsonEncoder) BeginArray() error {
 }
 
 func (j *jsonEncoder) EndArray() error {
-	if err := j.pop(json.Delim('['), "EndArray"); err != nil {
+	if err := j.pop(json.Delim('['), errCannotCallEndArray); err != nil {
 		return err
 	}
 	_, err := j.w.Write([]byte{']'})
 	return err
 }
 
-func (j *jsonEncoder) BeginObject() error {
+func (j *jsonEncoder) BeginObject(_ int) error {
 	if err := j.push(json.Delim('{')); err != nil {
 		return err
 	}
@@ -388,12 +390,20 @@ func (j *jsonEncoder) BeginObject() error {
 }
 
 func (j *jsonEncoder) ObjectField(name string) error {
-	if err := j.checkState(); err != nil {
+	if err := j.checkStateBeforeValue(false); err != nil {
 		return err
 	}
-	if len(j.state) == 0 || j.state[len(j.state)-1].start != '{' {
-		return errors.New("call to ObjectField without prior call to BeginObject")
+	if len(j.state) == 0 {
+		return errCannotCallObjectField
 	}
+	top := j.state[len(j.state)-1]
+	if top.start != '{' {
+		return errCannotCallObjectField
+	}
+	if top.hasName {
+		return errObjectFieldAlreadyCalled
+	}
+	top.needComma = false
 	if err := j.writeString(name); err != nil {
 		return err
 	}
@@ -402,7 +412,7 @@ func (j *jsonEncoder) ObjectField(name string) error {
 }
 
 func (j *jsonEncoder) EndObject() error {
-	if err := j.pop(json.Delim('{'), "EndObject"); err != nil {
+	if err := j.pop(json.Delim('{'), errCannotCallEndObject); err != nil {
 		return err
 	}
 	_, err := j.w.Write([]byte{'}'})
@@ -411,18 +421,37 @@ func (j *jsonEncoder) EndObject() error {
 
 func (j *jsonEncoder) checkState() error {
 	if len(j.state) == 0 {
-		return errors.New("already visited value")
+		return ErrAlreadyVisited
+	}
+	return nil
+}
+
+func (j *jsonEncoder) checkStateForValue() error {
+	if err := j.checkStateBeforeValue(true); err != nil {
+		return err
+	}
+	// If this is a singular value (not an array or object), mark it as done
+	top := j.state[len(j.state)-1]
+	if top.start == 0 {
+		j.state = j.state[:len(j.state)-1]
+	}
+	return nil
+}
+
+func (j *jsonEncoder) checkStateBeforeValue(requireName bool) error {
+	if err := j.checkState(); err != nil {
+		return err
 	}
 	top := j.state[len(j.state)-1]
+	if requireName && top.start == '{' && !top.hasName {
+		return errObjectFieldNeverCalled
+	}
 	if top.needComma {
 		if _, err := j.w.Write([]byte{','}); err != nil {
 			return err
 		}
 	} else {
 		top.needComma = true
-	}
-	if top.start == 0 {
-		j.state = j.state[:len(j.state)-1]
 	}
 	return nil
 }
@@ -437,7 +466,7 @@ func (j *jsonEncoder) writeString(s string) error {
 }
 
 func (j *jsonEncoder) push(start json.Delim) error {
-	if err := j.checkState(); err != nil {
+	if err := j.checkStateBeforeValue(true); err != nil {
 		return err
 	}
 	if len(j.state) == 1 {
@@ -448,12 +477,12 @@ func (j *jsonEncoder) push(start json.Delim) error {
 	return nil
 }
 
-func (j *jsonEncoder) pop(expectStart json.Delim, name string) error {
+func (j *jsonEncoder) pop(expectStart json.Delim, onUnmatched error) error {
 	if err := j.checkState(); err != nil {
 		return err
 	}
 	if len(j.state) == 0 || j.state[len(j.state)-1].start != expectStart {
-		return fmt.Errorf("unmatched call to %s", name)
+		return onUnmatched
 	}
 	j.state = j.state[:len(j.state)-1]
 	return nil
@@ -462,4 +491,5 @@ func (j *jsonEncoder) pop(expectStart json.Delim, name string) error {
 type jsonEncodeFrame struct {
 	start     json.Delim
 	needComma bool
+	hasName   bool
 }
